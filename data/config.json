@@ -1,0 +1,12 @@
+{
+  "target_groups": [
+  ],
+  "keywords": [
+    "通知",
+    "重要",
+    "紧急",
+    "提醒",
+    "必看"
+  ],
+  "enable_alert": true
+}

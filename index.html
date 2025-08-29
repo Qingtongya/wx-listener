@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>微信群通知监控系统</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <style>
+        .notification-unread {
+            background-color: #eff6ff; /* 浅蓝色背景 */
+            border-left: 4px solid #3b82f6; /* 左侧蓝色边框 */
+        }
+        .notification-read {
+            background-color: #ffffff; /* 白色背景 */
+        }
+        .unread-badge {
+            background-color: #dbeafe; /* 浅蓝色背景 */
+            color: #1e40af; /* 深蓝色文字 */
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div class="min-h-screen bg-gray-50">
+            <!-- 顶部导航 -->
+            <header class="bg-blue-600 text-white shadow">
+                <div class="container mx-auto px-4 py-3 flex justify-between items-center">
+                    <h1 class="text-xl font-bold">
+                        <i class="fas fa-bell mr-2"></i>微信群通知监控
+                    </h1>
+                    <div class="flex items-center space-x-4">
+                        <button @click="refresh" class="px-3 py-1 bg-blue-500 hover:bg-blue-700 rounded">
+                            <i class="fas fa-sync-alt mr-1"></i>刷新
+                        </button>
+                        <button @click="showGroupModal = true" class="px-3 py-1 bg-green-500 hover:bg-green-700 rounded">
+                            <i class="fas fa-plus mr-1"></i>添加群聊
+                        </button>
+                        <button @click="testModelConnection" class="px-3 py-1 bg-purple-500 hover:bg-purple-700 rounded">
+                            <i class="fas fa-plug mr-1"></i>测试模型
+                        </button>
+                    </div>
+                </div>
+            </header>
+
+            <!-- 主内容区 -->
+            <main class="container mx-auto px-4 py-6">
+                <!-- 统计卡片 -->
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                    <div class="bg-white p-4 rounded-lg shadow">
+                        <h3 class="text-gray-500">总通知数</h3>
+                        <p class="text-2xl font-bold">{{ stats.total }}</p>
+                    </div>
+                    <div class="bg-white p-4 rounded-lg shadow">
+                        <h3 class="text-gray-500">未读通知</h3>
+                        <p class="text-2xl font-bold text-blue-600">{{ stats.unread }}</p>
+                    </div>
+                    <div class="bg-white p-4 rounded-lg shadow">
+                        <h3 class="text-gray-500">紧急通知</h3>
+                        <p class="text-2xl font-bold text-red-500">{{ stats.urgent }}</p>
+                    </div>
+                    <div class="bg-white p-4 rounded-lg shadow">
+                        <h3 class="text-gray-500">监控群组</h3>
+                        <p class="text-2xl font-bold">{{ stats.groups }}</p>
+                    </div>
+                </div>
+
+                <!-- 监控群聊列表 -->
+                <div class="bg-white rounded-lg shadow overflow-hidden mb-6">
+                    <div class="border-b border-gray-200 px-4 py-3">
+                        <h2 class="font-semibold text-lg">当前监控的群聊</h2>
+                        <p class="text-sm text-gray-500">使用模型: deepseek-ai/DeepSeek-R1</p>
+                    </div>
+                    <div class="p-4">
+                        <div v-if="monitoredGroups.length === 0" class="text-center py-4 text-gray-500">
+                            <i class="fas fa-users-slash fa-2x mb-2"></i>
+                            <p>尚未添加监控群聊</p>
+                        </div>
+                        <ul v-else class="divide-y divide-gray-200">
+                            <li v-for="group in monitoredGroups" :key="group" class="py-3 flex justify-between items-center">
+                                <span class="font-medium">{{ group }}</span>
+                                <button @click="removeGroup(group)" class="text-red-500 hover:text-red-700">
+                                    <i class="fas fa-trash-alt mr-1"></i>移除
+                                </button>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- 通知列表 -->
+                <div class="bg-white rounded-lg shadow overflow-hidden">
+                    <div class="border-b border-gray-200 px-4 py-3 flex justify-between items-center">
+                        <h2 class="font-semibold text-lg">通知列表</h2>
+                        <div class="flex space-x-2">
+                            <select v-model="filterGroup" class="border rounded px-2 py-1 text-sm">
+                                <option value="">所有群组</option>
+                                <option v-for="group in monitoredGroups" :value="group">{{ group }}</option>
+                            </select>
+                            <select v-model="filterType" class="border rounded px-2 py-1 text-sm">
+                                <option value="">所有类型</option>
+                                <option value="紧急">紧急</option>
+                                <option value="普通">普通</option>
+                            </select>
+                            <select v-model="filterReadStatus" class="border rounded px-2 py-1 text-sm">
+                                <option value="">全部状态</option>
+                                <option value="unread">未读</option>
+                                <option value="read">已读</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div v-if="loading" class="p-8 text-center text-gray-500">
+                        <i class="fas fa-spinner fa-spin fa-2x"></i>
+                        <p class="mt-2">加载中...</p>
+                    </div>
+
+                    <div v-else-if="filteredNotifications.length === 0" class="p-8 text-center text-gray-500">
+                        <i class="fas fa-inbox fa-2x"></i>
+                        <p class="mt-2">暂无通知</p>
+                    </div>
+
+                    <ul v-else class="divide-y divide-gray-200">
+                        <li v-for="(note, index) in filteredNotifications" :key="index"
+                            class="px-4 py-3 transition-colors"
+                            :class="{'notification-unread': !note.is_read, 'notification-read': note.is_read}">
+                            <div class="flex justify-between items-start">
+                                <div>
+                                    <h3 class="font-medium flex items-center" :class="{'text-blue-600': !note.is_read, 'text-gray-700': note.is_read}">
+                                        {{ note.title }}
+                                        <span v-if="!note.is_read" class="ml-2 px-2 py-0.5 unread-badge text-xs rounded-full">未读</span>
+                                    </h3>
+                                    <p class="text-sm text-gray-500 mt-1">
+                                        <span class="mr-3"><i class="fas fa-users mr-1"></i>{{ note.group }}</span>
+                                        <span class="mr-3"><i class="fas fa-user mr-1"></i>{{ note.sender }}</span>
+                                        <span><i class="fas fa-clock mr-1"></i>{{ formatTime(note.timestamp) }}</span>
+                                    </p>
+                                </div>
+                                <span v-if="note.is_urgent" class="px-2 py-1 bg-red-100 text-red-800 text-xs rounded-full">
+                                    紧急
+                                </span>
+                            </div>
+                            <div class="mt-2 text-sm text-gray-700">
+                                <p>{{ note.content }}</p>
+                                <div v-if="note.time || note.location" class="mt-2 flex flex-wrap gap-2">
+                                    <span v-if="note.time" class="px-2 py-1 bg-gray-100 rounded text-xs">
+                                        <i class="fas fa-clock mr-1"></i>{{ note.time }}
+                                    </span>
+                                    <span v-if="note.location" class="px-2 py-1 bg-gray-100 rounded text-xs">
+                                        <i class="fas fa-map-marker-alt mr-1"></i>{{ note.location }}
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="mt-3 flex justify-end space-x-2">
+                                <button @click="markAsRead(note.id)" v-if="!note.is_read"
+                                        class="px-3 py-1 bg-green-100 text-green-700 text-xs rounded hover:bg-green-200">
+                                    <i class="fas fa-check mr-1"></i>标记已读
+                                </button>
+                                <button @click="deleteNotification(note.id)"
+                                        class="px-3 py-1 bg-red-100 text-red-700 text-xs rounded hover:bg-red-200">
+                                    <i class="fas fa-trash-alt mr-1"></i>删除
+                                </button>
+                                <button @click="showDetail(note)"
+                                        class="px-3 py-1 bg-blue-100 text-blue-700 text-xs rounded hover:bg-blue-200">
+                                    <i class="fas fa-eye mr-1"></i>详情
+                                </button>
+                            </div>
+                        </li>
+                    </ul>
+
+                    <div v-if="filteredNotifications.length > 0" class="px-4 py-3 border-t border-gray-200 flex justify-between items-center text-sm text-gray-500">
+                        <div>显示 {{ filteredNotifications.length }} 条通知</div>
+                        <div class="flex space-x-4">
+                            <button @click="markAllAsRead" v-if="hasUnread" class="text-blue-600 hover:text-blue-800">
+                                <i class="fas fa-check-double mr-1"></i>全部标记为已读
+                            </button>
+                            <button @click="deleteAllRead" v-if="hasRead" class="text-red-600 hover:text-red-800">
+                                <i class="fas fa-trash-alt mr-1"></i>删除所有已读
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+
+        <!-- 添加群聊模态框 -->
+        <div v-if="showGroupModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-md">
+                <div class="border-b border-gray-200 px-6 py-4 flex justify-between items-center">
+                    <h3 class="text-lg font-semibold">添加监控群聊</h3>
+                    <button @click="showGroupModal = false" class="text-gray-500 hover:text-gray-700">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="p-6">
+                    <div class="mb-4">
+                        <label class="block text-gray-700 mb-2">群聊名称</label>
+                        <input v-model="newGroupName" type="text" class="w-full px-3 py-2 border rounded"
+                               placeholder="请输入准确的微信群名称">
+                    </div>
+                </div>
+                <div class="border-t border-gray-200 px-6 py-4 flex justify-end">
+                    <button @click="showGroupModal = false" class="px-4 py-2 border rounded hover:bg-gray-100 mr-2">
+                        取消
+                    </button>
+                    <button @click="addGroup" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+                        添加
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 通知详情模态框 -->
+        <div v-if="showDetailModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-hidden">
+                <div class="border-b border-gray-200 px-6 py-4 flex justify-between items-center">
+                    <h3 class="text-lg font-semibold">{{ currentNote.title }}</h3>
+                    <button @click="showDetailModal = false" class="text-gray-500 hover:text-gray-700">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="p-6 overflow-y-auto" style="max-height: 70vh;">
+                    <div class="mb-4">
+                        <div class="flex flex-wrap gap-2 mb-3">
+                            <span class="px-2 py-1 bg-gray-100 rounded text-sm">
+                                <i class="fas fa-users mr-1"></i>{{ currentNote.group }}
+                            </span>
+                            <span class="px-2 py-1 bg-gray-100 rounded text-sm">
+                                <i class="fas fa-user mr-1"></i>{{ currentNote.sender }}
+                            </span>
+                            <span class="px-2 py-1 bg-gray-100 rounded text-sm">
+                                <i class="fas fa-clock mr-1"></i>{{ formatTime(currentNote.timestamp) }}
+                            </span>
+                            <span v-if="currentNote.is_urgent" class="px-2 py-1 bg-red-100 text-red-800 rounded text-sm">
+                                <i class="fas fa-exclamation-circle mr-1"></i>紧急
+                            </span>
+                            <span v-if="!currentNote.is_read" class="px-2 py-1 bg-blue-100 text-blue-800 rounded text-sm">
+                                <i class="fas fa-envelope mr-1"></i>未读
+                            </span>
+                        </div>
+
+                        <div v-if="currentNote.time || currentNote.location" class="mb-4">
+                            <div v-if="currentNote.time" class="mb-2">
+                                <h4 class="font-medium text-gray-700"><i class="fas fa-clock mr-2"></i>时间</h4>
+                                <p class="ml-6">{{ currentNote.time }}</p>
+                            </div>
+                            <div v-if="currentNote.location" class="mb-2">
+                                <h4 class="font-medium text-gray-700"><i class="fas fa-map-marker-alt mr-2"></i>地点</h4>
+                                <p class="ml-6">{{ currentNote.location }}</p>
+                            </div>
+                        </div>
+
+                        <div class="mb-4">
+                            <h4 class="font-medium text-gray-700"><i class="fas fa-align-left mr-2"></i>内容</h4>
+                            <p class="ml-6 whitespace-pre-line">{{ currentNote.content }}</p>
+                        </div>
+
+                        <div v-if="currentNote.action" class="mb-4">
+                            <h4 class="font-medium text-gray-700"><i class="fas fa-exclamation-circle mr-2"></i>需要行动</h4>
+                            <p class="ml-6">{{ currentNote.action }}</p>
+                        </div>
+                    </div>
+
+                    <div class="bg-gray-50 p-4 rounded">
+                        <h4 class="font-medium text-gray-700 mb-2"><i class="fas fa-comment-dots mr-2"></i>原始消息</h4>
+                        <p class="text-sm text-gray-600 whitespace-pre-line">{{ currentNote.raw_content }}</p>
+                    </div>
+                </div>
+                <div class="border-t border-gray-200 px-6 py-3 flex justify-between">
+                    <div>
+                        <button @click="deleteNotification(currentNote.id)" class="px-4 py-2 bg-red-100 text-red-700 rounded hover:bg-red-200 mr-2">
+                            <i class="fas fa-trash-alt mr-1"></i>删除通知
+                        </button>
+                        <button @click="markAsRead(currentNote.id)" v-if="!currentNote.is_read" class="px-4 py-2 bg-green-100 text-green-700 rounded hover:bg-green-200">
+                            <i class="fas fa-check mr-1"></i>标记为已读
+                        </button>
+                    </div>
+                    <button @click="showDetailModal = false" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+                        关闭
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/vue@3.2.31/dist/vue.global.min.js"></script>
+    <script>
+        const { createApp, ref, computed, onMounted } = Vue;
+
+        // 定义API基础URL
+        const API_BASE_URL = window.location.hostname === 'localhost'
+            ? 'http://localhost:5000'
+            : window.location.origin;
+
+        createApp({
+            setup() {
+                // 状态管理
+                const monitoredGroups = ref([]);
+                const notifications = ref([]);
+                const loading = ref(true);
+                const filterGroup = ref('');
+                const filterType = ref('');
+                const filterReadStatus = ref('');
+                const showGroupModal = ref(false);
+                const showDetailModal = ref(false);
+                const newGroupName = ref('');
+                const currentNote = ref(null);
+
+                // 统计数据
+                const stats = computed(() => {
+                    const total = notifications.value.length;
+                    const unread = notifications.value.filter(n => !n.is_read).length;
+                    const urgent = notifications.value.filter(n => n.is_urgent).length;
+                    const groups = monitoredGroups.value.length;
+
+                    return {
+                        total,
+                        unread,
+                        urgent,
+                        groups
+                    };
+                });
+
+                // 计算属性
+                const hasUnread = computed(() => {
+                    return notifications.value.some(n => !n.is_read);
+                });
+
+                const hasRead = computed(() => {
+                    return notifications.value.some(n => n.is_read);
+                });
+
+                // 获取监控群聊列表
+                const fetchMonitoredGroups = async () => {
+                    try {
+                        const response = await fetch(`${API_BASE_URL}/api/groups/monitored`);
+                        monitoredGroups.value = await response.json();
+                    } catch (error) {
+                        console.error('获取群聊列表失败:', error);
+                        alert('获取群聊列表失败，请检查后端服务');
+                    }
+                };
+
+                // 获取通知列表
+                const fetchNotifications = async () => {
+                    loading.value = true;
+                    try {
+                        const response = await fetch(`${API_BASE_URL}/api/notifications`);
+                        notifications.value = await response.json();
+                    } catch (error) {
+                        console.error('获取通知失败:', error);
+                        alert('获取通知失败，请检查后端服务');
+                    } finally {
+                        loading.value = false;
+                    }
+                };
+
+                // 添加群聊
+                const addGroup = async () => {
+                    if (!newGroupName.value.trim()) {
+                        alert('请输入群聊名称');
+                        return;
+                    }
+
+                    try {
+                        const response = await fetch(`${API_BASE_URL}/api/groups/add`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ group: newGroupName.value.trim() })
+                        });
+
+                        const result = await response.json();
+                        if (result.success) {
+                            await fetchMonitoredGroups();
+                            showGroupModal.value = false;
+                            newGroupName.value = '';
+                        } else {
+                            alert('添加群聊失败，请检查群聊名称是否正确');
+                        }
+                    } catch (error) {
+                        console.error('添加群聊失败:', error);
+                        alert('连接服务器失败，请检查后端服务是否运行');
+                    }
+                };
+
+                // 移除群聊
+                const removeGroup = async (groupName) => {
+                    if (!confirm(`确定要移除群聊 ${groupName} 的监控吗？`)) return;
+
+                    try {
+                        const response = await fetch(`${API_BASE_URL}/api/groups/remove`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ group: groupName })
+                        });
+
+                        const result = await response.json();
+                        if (result.success) {
+                            await fetchMonitoredGroups();
+                            await fetchNotifications();
+                        } else {
+                            alert('移除群聊失败');
+                        }
+                    } catch (error) {
+                        console.error('移除群聊失败:', error);
+                        alert('连接服务器失败，请检查后端服务是否运行');
+                    }
+                };
+
+                // 测试模型连接
+                const testModelConnection = async () => {
+                    try {
+                        const response = await fetch(`${API_BASE_URL}/api/model/test`);
+                        const result = await response.json();
+
+                        if (result.success) {
+                            alert(`模型测试成功！\n模型: ${result.model}\n状态: ${result.status}\n回答: ${result.response}`);
+                        } else {
+                            alert(`模型测试失败:\n模型: ${result.model}\n错误: ${result.error}`);
+                        }
+                    } catch (error) {
+                        alert('测试请求失败，请检查后端服务');
+                        console.error('测试连接出错:', error);
+                    }
+                };
+
+                // 标记为已读
+                const markAsRead = async (notificationId) => {
+                    try {
+                        const response = await fetch(`${API_BASE_URL}/api/notifications/${notificationId}/read`, {
+                            method: 'POST'
+                        });
+
+                        const result = await response.json();
+                        if (result.success) {
+                            await fetchNotifications();
+                        } else {
+                            alert('标记已读失败');
+                        }
+                    } catch (error) {
+                        console.error('标记已读失败:', error);
+                        alert('操作失败，请检查网络连接');
+                    }
+                };
+
+                // 标记全部为已读
+                const markAllAsRead = async () => {
+                    if (!confirm('确定要将所有未读通知标记为已读吗？')) return;
+
+                    try {
+                        // 获取所有未读通知ID
+                        const unreadIds = notifications.value
+                            .filter(n => !n.is_read)
+                            .map(n => n.id);
+
+                        // 批量标记为已读
+                        const promises = unreadIds.map(id =>
+                            fetch(`${API_BASE_URL}/api/notifications/${id}/read`, {
+                                method: 'POST'
+                            })
+                        );
+
+                        await Promise.all(promises);
+                        await fetchNotifications();
+                        alert('已将所有未读通知标记为已读');
+                    } catch (error) {
+                        console.error('标记全部为已读失败:', error);
+                        alert('操作失败，请检查网络连接');
+                    }
+                };
+
+                // 删除通知
+                const deleteNotification = async (notificationId) => {
+                    if (!confirm('确定要删除这条通知吗？此操作不可撤销。')) return;
+
+                    try {
+                        const response = await fetch(`${API_BASE_URL}/api/notifications/${notificationId}`, {
+                            method: 'DELETE'
+                        });
+
+                        const result = await response.json();
+                        if (result.success) {
+                            await fetchNotifications();
+                        } else {
+                            alert('删除通知失败');
+                        }
+                    } catch (error) {
+                        console.error('删除通知失败:', error);
+                        alert('操作失败，请检查网络连接');
+                    }
+                };
+
+                // 删除所有已读通知
+                const deleteAllRead = async () => {
+                    if (!confirm('确定要删除所有已读通知吗？此操作不可撤销。')) return;
+
+                    try {
+                        // 获取所有已读通知ID
+                        const readIds = notifications.value
+                            .filter(n => n.is_read)
+                            .map(n => n.id);
+
+                        // 批量删除
+                        const promises = readIds.map(id =>
+                            fetch(`${API_BASE_URL}/api/notifications/${id}`, {
+                                method: 'DELETE'
+                            })
+                        );
+
+                        await Promise.all(promises);
+                        await fetchNotifications();
+                        alert('已删除所有已读通知');
+                    } catch (error) {
+                        console.error('删除所有已读通知失败:', error);
+                        alert('操作失败，请检查网络连接');
+                    }
+                };
+
+                // 显示通知详情
+                const showDetail = (note) => {
+                    currentNote.value = note;
+                    showDetailModal.value = true;
+                };
+
+                // 刷新数据
+                const refresh = () => {
+                    fetchMonitoredGroups();
+                    fetchNotifications();
+                };
+
+                // 格式化时间
+                const formatTime = (timestamp) => {
+                    const date = new Date(timestamp);
+                    return date.toLocaleString('zh-CN', {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    });
+                };
+
+                // 过滤通知
+                const filteredNotifications = computed(() => {
+                    let result = notifications.value;
+
+                    // 群组过滤
+                    if (filterGroup.value) {
+                        result = result.filter(n => n.group === filterGroup.value);
+                    }
+
+                    // 类型过滤
+                    if (filterType.value === '紧急') {
+                        result = result.filter(n => n.is_urgent);
+                    } else if (filterType.value === '普通') {
+                        result = result.filter(n => !n.is_urgent);
+                    }
+
+                    // 已读状态过滤
+                    if (filterReadStatus.value === 'read') {
+                        result = result.filter(n => n.is_read);
+                    } else if (filterReadStatus.value === 'unread') {
+                        result = result.filter(n => !n.is_read);
+                    }
+
+                    // 按时间倒序排列
+                    return result.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                });
+
+                // 初始化
+                onMounted(() => {
+                    fetchMonitoredGroups();
+                    fetchNotifications();
+
+                    // 启动监控服务
+                    fetch(`${API_BASE_URL}/api/start`, { method: 'POST' })
+                        .catch(error => console.error('启动监控服务失败:', error));
+                });
+
+                return {
+                    monitoredGroups,
+                    notifications,
+                    loading,
+                    filterGroup,
+                    filterType,
+                    filterReadStatus,
+                    showGroupModal,
+                    showDetailModal,
+                    newGroupName,
+                    currentNote,
+                    stats,
+                    hasUnread,
+                    hasRead,
+                    filteredNotifications,
+                    refresh,
+                    addGroup,
+                    removeGroup,
+                    testModelConnection,
+                    markAsRead,
+                    markAllAsRead,
+                    deleteNotification,
+                    deleteAllRead,
+                    showDetail,
+                    formatTime
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
